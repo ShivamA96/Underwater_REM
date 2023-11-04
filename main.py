@@ -20,7 +20,7 @@ def extract_frames(video_path, interval, output_dir):
 
     cap.release()
 
-video_paths = [r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\GOPR5096.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\GOPR5098.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\GOPR5099.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\GOPR5100.MP4"]
+video_paths = [r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\DatasetVideos\GOPR5096.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\DatasetVideos\GOPR5098.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\DatasetVideos\GOPR5099.MP4", r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\DatasetVideos\GOPR5100.MP4"]
 interval = [3,5,7]  # in seconds
 output_dirs = [r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\images\3Seconds",r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\images\5Seconds",r"C:\Users\1100a\PycharmProjects\pixelDistanceAndRealDistance\images\7Seconds"]
 

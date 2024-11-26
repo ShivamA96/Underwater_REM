@@ -21,7 +21,7 @@ def is_inside_cone(point):
 
 # Read coordinates from a CSV file with a custom format
 coordinates = []
-with open('coordinates-1725875156.3758428.csv', newline='') as csvfile:
+with open('coordinates.csv', newline='') as csvfile:
     csv_reader = csv.reader(csvfile)
     current_set = []
     for row in csv_reader:
@@ -36,53 +36,22 @@ with open('coordinates-1725875156.3758428.csv', newline='') as csvfile:
 
 def count_encounters(coordinates):
     global encounter_count
-    complete_arr = []
     for coord_set in coordinates:
         inside_flags = []  # Flag array to track inside/outside for each particle
         for coord in coord_set:
             point = np.array(coord)
             inside = is_inside_cone(point)
             inside_flags.append(inside)
-        print(inside_flags)
-        complete_arr.append(inside_flags)
-    complete_arr = np.array(complete_arr).flatten()
-    for i in range(len(complete_arr) - 1):                
-                if i == len(complete_arr) - 10:
-                    break
-                current_flags = complete_arr[i]
-                # print(current_flags)
-                next_flags = complete_arr[i + 10]
-                # print(next_flags)
-                # Find where the transition occurs from False to True for each pair
-                transition_points = np.logical_and(~current_flags, next_flags)
-                # Increment encounter count for each transition point in the pair
-            
-                encounter_count += np.sum(transition_points)
-
+        
+        prev_inside = None
+        for inside in inside_flags:
+            if prev_inside is None:
+                prev_inside = inside
+            elif not prev_inside and inside:
+                # Particle went from outside to inside -> Increment encounter count
+                encounter_count += 1
+            prev_inside = inside
 
 # Count encounters for all coordinate sets
 count_encounters(coordinates)
 print(f"Total encounters: {encounter_count}")
-
-
-
-# if current flag = true and above this if prev flag = false then count +1 data mein difference should of 10 and not 1
-
-# segment data in 3 dimensional array
-
-# # 
-
-# y = d * r0 [(r(pi * r + root(h**2)))] * v (vmed) * t (total time 1800s) 
-
-
-
-# y = number of encounters
-
-
-# r of cone = 0.25
-# h = 1
-
-# calculate L
-
-# r0 = surface area of cone
-

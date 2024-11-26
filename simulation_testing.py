@@ -202,6 +202,7 @@ class Simulation(animation.TimedAnimation):
         
         # Only draw the cone above the xy-plane (z>0)
         mask = z <= height
+        
         x = x[mask]
         y = y[mask]
         z = z[mask]
@@ -304,7 +305,7 @@ class Simulation(animation.TimedAnimation):
         self.r += self.dt * self.v
 
 
-        with open('coordinates.csv', 'a', newline='') as file:
+        with open(f'coordinates-{currtime}.csv', 'a', newline='') as file:
             np.savetxt(file, np.round(self.r, 4), delimiter=',',fmt='%.4f', newline='\n', header='\n')
             
 
@@ -409,13 +410,19 @@ def V(t, V0, Vf, t_max):
     return V0 + (Vf - V0) * t / t_max
 
 
-PARTICLES = 10
+PARTICLES = 100
 MASS = 1.2e-20
 RADIUS = 0.01
 TEMPERATURE = 500
 V0, Vf = 0.5, 15
 T_MAX = 1000
 
+currtime = time.time()
+ 
+
+
+
+ 
 ani = Simulation(PARTICLES, MASS, RADIUS, TEMPERATURE, 10, T_MAX, 0.1) 
 # ani.store_coordinates()
 # ani = Simulation(PARTICLES, MASS, RADIUS, TEMPERATURE, lambda t: V(t, V0, Vf, T_MAX), T_MAX)

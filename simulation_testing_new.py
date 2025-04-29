@@ -3,312 +3,262 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import types
 from mpl_toolkits.mplot3d import Axes3D
+import csv
 import time
 import math
 
-# Physical constants
-k_B = 1.380648e-23  # Boltzmann constant (J/K)
+k_B = 1.380648e-23  # boltzmann constant (J/K)
 
 
 def mod(v):
-    """
-    Compute the squared sum over the last axis of the numpy array.
-
-    Args:
-        v (numpy.ndarray): Input array of velocities or positions
-
-    Returns:
-        numpy.ndarray: Squared magnitude of vectors
-    """
     return np.sum(v * v, axis=-1)
 
 
-def maxwell_boltzmann_distribution(v, T, m):
-    """
-    Maxwell-Boltzmann's distribution of probability for velocity magnitude.
-
-    Args:
-        v (float): Velocity magnitude
-        T (float): Temperature
-        m (float): Particle mass
-
-    Returns:
-        float: Probability density
-    """
+def pmod(v, T, m):
     return 4 * np.pi * v**2 * np.power(m / (2 * np.pi * k_B * T), 3 / 2) * np.exp(- m * v**2 / (2 * k_B * T))
 
 
-class WaterBodySimulation(animation.TimedAnimation):
-    """
-    Advanced simulation of particles in a water body with improved boundary handling.
-
-    Key features:
-    - Realistic water body boundary interactions
-    - Energy-conserving collisions
-    - Detailed tracking of particle trajectories
-    """
-
-    def __init__(self, n_particles, mass, rad, T, water_dimensions, max_time, dt=0.1):
-        """
-        Initialize the water body particle simulation.
-
-        Args:
-            n_particles (int): Number of particles in the system
-            mass (float): Mass of each particle
-            rad (float): Particle radius
-            T (float): System temperature
-            water_dimensions (tuple): Dimensions of the water body (x, y, z)
-            max_time (float): Maximum simulation time
-            dt (float): Time step for simulation
-        """
+class Simulation(animation.TimedAnimation):
+    def __init__(self, n_particles, mass, rad, T, V, max_time, dt=0.1, n_cameras=3):
         self.PART = n_particles
         self.MASS = mass
         self.RAD = rad
         self.DIAM = 2 * rad
         self.T = T
+        self.n_cameras = n_cameras
 
-        # Water body dimensions
-        self.WATER_X, self.WATER_Y, self.WATER_Z = water_dimensions
+        if isinstance(V, types.FunctionType):
+            self.V0 = V(0)
+            self.V = V
+            self.Vconst = False
+        else:
+            self.V0 = V
+            self.V = lambda t: V
+            self.Vconst = True
+
+        self.L = np.power(self.V0, 1/3)
+        self.halfL = self.L / 2
+        self.A = 6 * self.L**2
 
         self.max_time = max_time
         self.dt = dt
         self.Nt = int(max_time / self.dt)
 
-        # Velocities histogram
+        self.evaluate_properties()
+
         self.min_v = 0
-        self.max_v = 3 * np.sqrt(2 * k_B * self.T / self.MASS)
-        self.dv = 0.2  # Velocity bin width
+        self.max_v = self.vmax * 3
+        self.dv = 0.2
         self.Nv = int((self.max_v - self.min_v) / self.dv)
 
-        # Initialize system properties
-        self.evaluate_properties()
+        self.dP = 1
+        self.NP = int(max_time / self.dP)
+
         self.init_particles()
+        self.init_cameras()
         self.init_figures()
 
         animation.TimedAnimation.__init__(
             self, self.fig, interval=1, blit=True, repeat=False)
 
     def evaluate_properties(self):
-        """
-        Calculate initial thermodynamic properties of the system.
-        """
-        water_volume = self.WATER_X * self.WATER_Y * self.WATER_Z
-        self.P = self.PART * k_B * self.T / water_volume
+        self.P = self.PART * k_B * self.T / self.V0
         self.U = 1.5 * self.PART * k_B * self.T
         self.vrms = np.sqrt(3 * k_B * self.T / self.MASS)
         self.vmax = np.sqrt(2 * k_B * self.T / self.MASS)
         self.vmed = np.sqrt(8 * k_B * self.T / (np.pi * self.MASS))
 
-        # Velocity histogram initialization
-        self.vel_x = np.linspace(self.min_v, self.max_v, self.Nv)
-        self.vel_y = np.zeros(self.Nv)
-
     def init_particles(self):
-        """
-        Initialize particle positions and velocities with water body constraints.
-        """
-        # Randomly distribute particles within water body
-        self.r = np.random.rand(self.PART, 3) * \
-            [self.WATER_X, self.WATER_Y, self.WATER_Z]
-
-        # Generate velocities using Maxwell-Boltzmann distribution
+        self.r = np.random.rand(self.PART, 3) * 2 * \
+            (self.halfL - self.RAD) - (self.halfL - self.RAD)
         v_polar = np.random.random((self.PART, 2))
-
         self.v = np.zeros((self.PART, 3))
         self.v[:, 0] = np.sin(v_polar[:, 0] * np.pi) * \
             np.cos(v_polar[:, 1] * 2 * np.pi)
         self.v[:, 1] = np.sin(v_polar[:, 0] * np.pi) * \
             np.sin(v_polar[:, 1] * 2 * np.pi)
         self.v[:, 2] = np.cos(v_polar[:, 0] * np.pi)
-
         self.v *= self.vrms
 
+    def init_cameras(self):
+        self.cam_positions = np.array([
+            [self.halfL, 0, 0],
+            [-self.halfL, 0, 0],
+            [0, self.halfL, 0],
+            [0, -self.halfL, 0],
+            [0, 0, self.halfL],
+            [0, 0, -self.halfL]
+        ])[:self.n_cameras]
+
+        self.cam_directions = -self.cam_positions / \
+            np.linalg.norm(self.cam_positions, axis=1)[:, np.newaxis]
+
     def init_figures(self):
-        """
-        Initialize the simulation visualization with multiple plots.
-        """
         self.fig = plt.figure(figsize=(15, 10))
 
-        # 3D plot grid layout
-        self.ax1 = plt.subplot2grid(
-            (3, 3), (0, 0), colspan=2, rowspan=2, projection='3d')
-        self.ax2 = plt.subplot2grid((3, 3), (2, 0))  # XY projection
-        self.ax5 = plt.subplot2grid((3, 3), (0, 2))  # Velocity distribution
-
-        # 3D plot setup
-        box_limits = [0, max(self.WATER_X, self.WATER_Y, self.WATER_Z)]
-        self.ax1.set_xlim3d(box_limits)
+        # Main 3D plot
+        self.ax1 = self.fig.add_subplot(221, projection='3d')
+        self.ax1.set_xlim([-self.halfL, self.halfL])
+        self.ax1.set_ylim([-self.halfL, self.halfL])
+        self.ax1.set_zlim([-self.halfL, self.halfL])
         self.ax1.set_xlabel('X')
-        self.ax1.set_ylim3d(box_limits)
         self.ax1.set_ylabel('Y')
-        self.ax1.set_zlim3d(box_limits)
         self.ax1.set_zlabel('Z')
-
-        # Particle plot in 3D
         self.line_3d = self.ax1.plot([], [], [], ls='None', marker='.')[0]
 
-        # XY projection setup
-        self.ax2.set_xlabel('X')
-        self.ax2.set_ylabel('Y')
-        self.ax2.set_xlim(0, self.WATER_X)
-        self.ax2.set_ylim(0, self.WATER_Y)
-        self.line_xy = self.ax2.plot([], [], ls='None', marker='.')[0]
+        # Camera view plots
+        self.camera_axes = []
+        for i in range(self.n_cameras):
+            ax = self.fig.add_subplot(2, 3, i+4)
+            ax.set_xlim([-self.halfL, self.halfL])
+            ax.set_ylim([-self.halfL, self.halfL])
+            ax.set_title(f'Camera {i+1} View')
+            self.camera_axes.append(ax)
 
-        # Theoretical velocity distribution
-        vs = np.linspace(0, self.max_v, 50)
-        self.ax5.set_xlabel('Velocity (m/s)')
-        self.ax5.set_ylabel('Particle Count')
-        self.ax5.plot(vs, self.PART * maxwell_boltzmann_distribution(vs,
-                      self.T, self.MASS) * self.dv, color='r')
+        self.camera_lines = [ax.plot([], [], ls='None', marker='.')[
+            0] for ax in self.camera_axes]
 
-        # Actual velocity distribution line
-        self.line_vel = self.ax5.plot([], [], color='b', lw=0.5)[0]
+        # Velocity histogram
+        self.ax_vel = self.fig.add_subplot(222)
+        vs = np.linspace(0, self.vmax * 3, 50)
+        self.ax_vel.set_xlabel(r'$v\ (m/s)$')
+        self.ax_vel.set_ylabel(r'$N$')
+        self.ax_vel.plot(vs, self.PART * pmod(vs, self.T,
+                         self.MASS) * self.dv, color='r')
+        self.vel_x = np.linspace(self.min_v, self.max_v, self.Nv)
+        self.vel_y = np.zeros(self.Nv)
+        self.line_vel = self.ax_vel.plot([], [], color='b', lw=0.5)[0]
 
-        self._drawn_artists = [self.line_3d, self.line_xy, self.line_vel]
+        # Pressure plot
+        self.ax_p = self.fig.add_subplot(223)
+        self.ax_p.set_xlabel(r'$t\ (s)$')
+        self.ax_p.set_ylabel(r'$P\ (Pa)$')
+        if self.Vconst:
+            pt = self.PART * k_B * self.T / self.V0
+            self.ax_p.plot([0, self.max_time], [pt, pt], color='r', lw=0.5)
+        else:
+            Vx = self.V(np.linspace(0, self.max_time, self.Nt))
+            self.ax_p.plot(Vx, self.PART * k_B *
+                           self.T / Vx, color='r', lw=0.5)
 
-    def handle_boundary_collisions(self):
-        """
-        Advanced boundary collision handling with energy conservation.
-        """
-        boundary_collisions = np.zeros_like(self.r, dtype=bool)
+        self.ex_p = 0.0
+        self.last_P = -1
+        self.P_x = np.zeros(self.NP)
+        self.P_y = np.zeros(self.NP)
+        self.line_p = self.ax_p.plot([], [], color='b', lw=0.5)[0]
 
-        # Boundary checks
-        x_low_collision = self.r[:, 0] < 0
-        x_high_collision = self.r[:, 0] > self.WATER_X
-        boundary_collisions[:, 0] = x_low_collision | x_high_collision
+        self._drawn_artists = [self.line_3d,
+                               self.line_vel, self.line_p] + self.camera_lines
 
-        y_low_collision = self.r[:, 1] < 0
-        y_high_collision = self.r[:, 1] > self.WATER_Y
-        boundary_collisions[:, 1] = y_low_collision | y_high_collision
+    def update_volume(self, t):
+        self.V0 = self.V(t)
+        self.L = np.power(self.V0, 1/3)
+        self.halfL = self.L / 2
+        self.A = 6 * self.L**2
 
-        z_low_collision = self.r[:, 2] < 0
-        z_high_collision = self.r[:, 2] > self.WATER_Z
-        boundary_collisions[:, 2] = z_low_collision | z_high_collision
+        box_limits = [-self.halfL, self.halfL]
+        self.ax1.set_xlim3d(box_limits)
+        self.ax1.set_ylim3d(box_limits)
+        self.ax1.set_zlim3d(box_limits)
 
-        # Coefficient of restitution
-        RESTITUTION = 0.95
+        for ax in self.camera_axes:
+            ax.set_xlim(box_limits)
+            ax.set_ylim(box_limits)
 
-        # Reflect velocities and adjust positions
-        for dim in range(3):
-            reflection_indices = boundary_collisions[:, dim]
+    def _draw_frame(self, t):
+        self.update_volume(t)
 
-            # Reverse velocity with energy loss
-            self.v[reflection_indices, dim] *= -RESTITUTION
-
-            # Correct particle positions
-            if dim == 0:  # X boundary
-                self.r[x_low_collision, dim] = -self.r[x_low_collision, dim]
-                self.r[x_high_collision, dim] = 2 * \
-                    self.WATER_X - self.r[x_high_collision, dim]
-            elif dim == 1:  # Y boundary
-                self.r[y_low_collision, dim] = -self.r[y_low_collision, dim]
-                self.r[y_high_collision, dim] = 2 * \
-                    self.WATER_Y - self.r[y_high_collision, dim]
-            else:  # Z boundary
-                self.r[z_low_collision, dim] = -self.r[z_low_collision, dim]
-                self.r[z_high_collision, dim] = 2 * \
-                    self.WATER_Z - self.r[z_high_collision, dim]
-
-    def handle_inter_particle_collisions(self):
-        """
-        Advanced inter-particle collision detection and resolution.
-        """
-        # Compute pairwise distances
-        dists = np.sqrt(
-            mod(self.r[:, np.newaxis, :] - self.r[np.newaxis, :, :]))
-
-        # Identify colliding particle pairs
-        collision_mask = (dists > 0) & (dists < self.DIAM)
-        collision_indices = np.argwhere(collision_mask)
-
-        for i, j in collision_indices:
-            if i >= j:  # Avoid duplicate processing
-                continue
-
-            # Compute relative position and velocity
-            r_ij = self.r[i] - self.r[j]
-            v_ij = self.v[i] - self.v[j]
-
-            # Elastic collision resolution
-            dot_product = np.dot(v_ij, r_ij)
-            distance_squared = np.sum(r_ij ** 2)
-
-            collision_factor = 2 * self.MASS * dot_product / \
-                (distance_squared * (2 * self.MASS))
-
-            # Update velocities
-            self.v[i] -= collision_factor * r_ij
-            self.v[j] += collision_factor * r_ij
-
-            # Slightly separate colliding particles
-            overlap_correction = (self.DIAM - dists[i, j]) / 2
-            self.r[i] += overlap_correction * r_ij / dists[i, j]
-            self.r[j] -= overlap_correction * r_ij / dists[i, j]
-
-    def _draw_frame(self, frameNum):
-        """
-        Update particle positions and handle interactions for each frame.
-        """
         # Update particle positions
         self.r += self.dt * self.v
 
-        # Handle particle-particle and boundary collisions
-        self.handle_inter_particle_collisions()
-        self.handle_boundary_collisions()
+        # Check for collisions with other particles
+        dists = np.sqrt(mod(self.r - self.r[:, np.newaxis]))
+        cols2 = (0 < dists) & (dists < self.DIAM)
+        idx_i, idx_j = np.nonzero(cols2)
+        for i, j in zip(idx_i, idx_j):
+            if j < i:
+                continue
+            rij = self.r[i] - self.r[j]
+            d = mod(rij)
+            vij = self.v[i] - self.v[j]
+            dv = np.dot(vij, rij) * rij / d
+            self.v[i] -= dv
+            self.v[j] += dv
+            self.r[i] += self.dt * self.v[i]
+            self.r[j] += self.dt * self.v[j]
 
-        # Update visualization
-        self.update_visualization()
+        # Check for collisions with walls
+        walls = np.nonzero(np.abs(self.r) + self.RAD > self.halfL)
+        self.v[walls] *= -1
+        self.r[walls] -= self.RAD * np.sign(self.r[walls])
 
-    def update_visualization(self):
-        """
-        Update plot elements for current particle state.
-        """
-        # 3D particle positions
+        # Update main 3D plot
         self.line_3d.set_data(self.r[:, 0], self.r[:, 1])
         self.line_3d.set_3d_properties(self.r[:, 2])
 
-        # XY projection
-        self.line_xy.set_data(self.r[:, 0], self.r[:, 1])
+        # Update camera views
+        for i, (line, cam_pos, cam_dir) in enumerate(zip(self.camera_lines, self.cam_positions, self.cam_directions)):
+            # Project particles onto camera plane
+            r_rel = self.r - cam_pos
+            dist = np.dot(r_rel, cam_dir)
+            r_proj = r_rel - dist[:, np.newaxis] * cam_dir
 
-        # Velocity histogram
+            # Calculate 2D coordinates in camera plane
+            up = np.array([0, 0, 1])
+            right = np.cross(cam_dir, up)
+            up = np.cross(right, cam_dir)
+
+            x = np.dot(r_proj, right)
+            y = np.dot(r_proj, up)
+
+            line.set_data(x, y)
+
+        # Update velocity histogram
         v_mod = np.sqrt(mod(self.v))
         for k in range(self.Nv):
             self.vel_y[k] = np.count_nonzero(
                 (k*self.dv < v_mod) & (v_mod < (k + 1)*self.dv))
-
         self.line_vel.set_data(self.vel_x, self.vel_y)
 
+        # Update pressure plot
+        self.ex_p += 2 * self.MASS * np.sum(np.abs(self.v[walls]))
+        i = int(t / self.dP)
+        if i > self.last_P + 1:
+            self.last_P = i - 1
+            A_avg = self.A if self.Vconst else (
+                self.A + 6 * np.power(self.V(t - self.dP), 2/3)) / 2
+            self.P_x[self.last_P] = t
+            self.P_y[self.last_P] = self.ex_p / (self.dP * A_avg)
+            self.ex_p = 0.0
+            self.line_p.set_data(self.P_x[:i], self.P_y[:i])
+            self.ax_p.set_ylim(np.min(self.P_y[:i]), np.max(self.P_y[:i]))
+
     def new_frame_seq(self):
-        """
-        Generate frame sequence for animation.
-        """
         return iter(np.linspace(0, self.max_time, self.Nt))
 
+    def save_data(self):
+        with open('pressure.txt', 'w') as outf:
+            t = np.linspace(0, self.max_time, self.NP)
+            for i in range(self.NP):
+                outf.write('%.5f\t%.5f\t%.5g\n' %
+                           (t[i], self.P_x[i], self.P_y[i]))
 
-def main():
-    """
-    Main function to set up and run the water body particle simulation.
-    """
-    # Simulation parameters
-    PARTICLES = 100
-    MASS = 1.2e-20  # kg
-    RADIUS = 0.01   # m
-    TEMPERATURE = 500  # K
-    WATER_DIMENSIONS = (1.0, 1.0, 1.0)  # 1m x 1m x 1m water body
-    MAX_TIME = 100  # seconds
-
-    # Create and run simulation
-    simulation = WaterBodySimulation(
-        PARTICLES,
-        MASS,
-        RADIUS,
-        TEMPERATURE,
-        WATER_DIMENSIONS,
-        MAX_TIME
-    )
-
-    plt.show()
+        with open('hist_vel.txt', 'w') as outf:
+            for i in range(self.Nv):
+                outf.write('%.5f\t%.5g\n' % (self.vel_x[i], self.vel_y[i]))
 
 
-if __name__ == "__main__":
-    main()
+# Simulation parameters
+PARTICLES = 100
+MASS = 1.2e-20
+RADIUS = 0.01
+TEMPERATURE = 500
+VOLUME = 10
+T_MAX = 1000
+N_CAMERAS = 3
+
+# Run simulation
+ani = Simulation(PARTICLES, MASS, RADIUS, TEMPERATURE,
+                 VOLUME, T_MAX, 0.1, N_CAMERAS)
+plt.show()
+ani.save_data()
